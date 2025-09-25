@@ -38,10 +38,6 @@ from vllm.v1.kv_cache_interface import AttentionSpec
 FP8_DTYPE = current_platform.fp8_dtype()
 FP4_DTYPE = torch.uint8
 
-# globals needed for string-import custom Dynamo backend field
-backend: TestBackend | None = None
-backend_unfused: TestBackend | None = None
-
 
 class AttentionQuantPatternModel(torch.nn.Module):
     """Base model for AttentionQuantPattern fusion."""
