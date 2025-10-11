@@ -439,7 +439,11 @@ class AsyncTPPass(VllmPatternMatcherPass):
         # This pass is applied on top of the sequence parallelism pass.
         # It inherits the same applicability condition as `SequenceParallelismPass`.
         # See `SequenceParallelismPass.is_applicable` for more details.
-        if self.splitting_ops is None or self.splitting_ops == []:
+        compilation_config = self.compilation_config()
+        assert compilation_config is not None
+        splitting_ops = compilation_config.splitting_ops
+        use_inductor_graph_partition = compilation_config.use_inductor_graph_partition
+        if not splitting_ops or use_inductor_graph_partition:
             return True
         tp_size = get_tensor_model_parallel_world_size()
         return shape is not None and shape % tp_size == 0
