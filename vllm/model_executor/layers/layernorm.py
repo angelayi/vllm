@@ -194,25 +194,25 @@ class RMSNorm(CustomOp):
             x = x + residual
             residual = x.to(orig_dtype)
 
-        if x.shape[-1] != hidden_size:
+        if x.shape[-1] != self.hidden_size:
             raise ValueError(
-                f"Expected hidden_size to be {hidden_size}, but found: {x.shape[-1]}"
+                f"Expected hidden_size to be {self.hidden_size}, but found: {x.shape[-1]}"
             )
 
-        if variance_size_override is None:
+        if self.variance_size_override is None:
             x_var = x
         else:
-            if hidden_size < variance_size_override:
+            if self.hidden_size < self.variance_size_override:
                 raise ValueError(
                     "Expected hidden_size to be at least "
-                    f"{variance_size_override}, but found: {hidden_size}"
+                    f"{self.variance_size_override}, but found: {self.hidden_size}"
                 )
 
-            x_var = x[:, :, :variance_size_override]
+            x_var = x[:, :, : self.variance_size_override]
 
         variance = x_var.pow(2).mean(dim=-1, keepdim=True)
 
-        x = x * torch.rsqrt(variance + variance_epsilon)
+        x = x * torch.rsqrt(variance + self.variance_epsilon)
         x = x.to(orig_dtype)
         if weight is not None:
             x = x * weight
