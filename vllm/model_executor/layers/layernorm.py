@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Custom normalization layers."""
-from typing import Union, Optional 
 
 import torch
 import torch.nn as nn
@@ -184,7 +183,12 @@ class RMSNorm(CustomOp):
     @staticmethod
     def forward_static(
         x: torch.Tensor,
+        variance_epsilon: float,
+        hidden_size: int,
+        orig_dtype: torch.dtype,
+        weight: torch.Tensor | None = None,
         residual: torch.Tensor | None = None,
+        variance_size_override: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """PyTorch-native implementation equivalent to forward()."""
         x = x.to(torch.float32)
@@ -195,25 +199,25 @@ class RMSNorm(CustomOp):
             x = x + residual
             residual = x.to(orig_dtype)
 
-        if x.shape[-1] != self.hidden_size:
+        if x.shape[-1] != hidden_size:
             raise ValueError(
-                f"Expected hidden_size to be {self.hidden_size}, but found: {x.shape[-1]}"
+                f"Expected hidden_size to be {hidden_size}, but found: {x.shape[-1]}"
             )
 
-        if self.variance_size_override is None:
+        if variance_size_override is None:
             x_var = x
         else:
-            if self.hidden_size < self.variance_size_override:
+            if hidden_size < variance_size_override:
                 raise ValueError(
                     "Expected hidden_size to be at least "
-                    f"{self.variance_size_override}, but found: {self.hidden_size}"
+                    f"{variance_size_override}, but found: {hidden_size}"
                 )
 
-            x_var = x[:, :, : self.variance_size_override]
+            x_var = x[:, :, :variance_size_override]
 
         variance = x_var.pow(2).mean(dim=-1, keepdim=True)
 
-        x = x * torch.rsqrt(variance + self.variance_epsilon)
+        x = x * torch.rsqrt(variance + variance_epsilon)
         x = x.to(orig_dtype)
         if weight is not None:
             x = x * weight
@@ -225,8 +229,8 @@ class RMSNorm(CustomOp):
     def forward_native(
         self,
         x: torch.Tensor,
-        residual: Optional[torch.Tensor] = None,
-    ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        residual: torch.Tensor | None = None,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """PyTorch-native implementation equivalent to forward()."""
 
         return self.forward_static(
@@ -329,11 +333,7 @@ class GemmaRMSNorm(CustomOp):
         """PyTorch-native implementation equivalent to forward()."""
         orig_dtype = x.dtype
         if residual is not None:
-            x = (
-                x.float() + residual.float()
-                if orig_dtype == torch.float16
-                else x + residual
-            )
+            x = x + residual.float() if orig_dtype == torch.float16 else x + residual
             residual = x
 
         x = x.float()
