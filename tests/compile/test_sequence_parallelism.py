@@ -273,13 +273,7 @@ def sequence_parallelism_pass_on_test_model(
         )
     )  # NoOp needed for fusion
     device_config = DeviceConfig(device=torch.device("cuda"))
-
-    # this is a fake model name to construct the model config
-    # in the vllm_config, it's not really used.
-    model_name = "nm-testing/TinyLlama-1.1B-Chat-v1.0-FP8-e2e"
-    model_config = ModelConfig(
-        model=model_name, trust_remote_code=True, dtype=dtype, seed=42
-    )
+    model_config = ModelConfig(dtype=dtype, seed=42)
 
     vllm_config = VllmConfig(
         model_config=model_config,

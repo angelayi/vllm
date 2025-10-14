@@ -299,13 +299,8 @@ def all_reduce_fusion_pass_on_test_model(
     )
     vllm_config.device_config = DeviceConfig(device=torch.device("cuda"))
     vllm_config.parallel_config.rank = local_rank  # Setup rank for debug path
+    vllm_config.model_config = ModelConfig(dtype=dtype, seed=42)
 
-    # this is a fake model name to construct the model config
-    # in the vllm_config, it's not really used.
-    model_name = "nm-testing/TinyLlama-1.1B-Chat-v1.0-FP8-e2e"
-    vllm_config.model_config = ModelConfig(
-        model=model_name, trust_remote_code=True, dtype=dtype, seed=42
-    )
     with set_current_vllm_config(vllm_config):
         all_reduce_fusion_pass = AllReduceFusionPass(vllm_config)
         noop_pass = NoOpEliminationPass(vllm_config)
