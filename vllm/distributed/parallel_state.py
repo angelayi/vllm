@@ -39,8 +39,12 @@ from unittest.mock import patch
 import torch
 import torch.distributed
 import torch.distributed._functional_collectives as funcol
-import torch.distributed._symmetric_memory
 from torch.distributed import Backend, ProcessGroup
+from torch.distributed._symmetric_memory import (
+    _fused_all_gather_matmul_impl,
+    _fused_scaled_matmul_reduce_scatter_impl,
+    _maybe_convert_scalar_types_to_dtypes,
+)
 from typing_extensions import deprecated
 
 import vllm.envs as envs
@@ -214,6 +218,43 @@ def patched_fused_scaled_matmul_reduce_scatter_fake(
     return res
 
 
+def _fused_bmm_fp8_reduce_scatter(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    A_scale: torch.Tensor,
+    B_scale: torch.Tensor,
+    reduce_op: str,
+    orig_scatter_dim: int,
+    scatter_dim_after_maybe_reshape: int,
+    group_name: str,
+    output_shape: list[int],
+    bias: torch.Tensor | None = None,
+    result_scale: torch.Tensor | None = None,
+    out_dtype: torch.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> torch.Tensor:
+    with torch.profiler.record_function("fused_scaled_matmul_reduce_scatter"):
+        return _fused_scaled_matmul_reduce_scatter_impl(
+            mm_out_op=torch.ops.vllm.bmm_fp8.default,
+            A=A,
+            B=B,
+            A_scale=A_scale,
+            kwargs={
+                "scale_b": B_scale,
+                "bias": bias,
+                "scale_result": result_scale,
+                "out_dtype": out_dtype,
+                "use_fast_accum": use_fast_accum,
+            },
+            out_dtype=out_dtype,
+            reduce_op=reduce_op,
+            orig_scatter_dim=orig_scatter_dim,
+            scatter_dim_after_maybe_reshape=scatter_dim_after_maybe_reshape,
+            group_name=group_name,
+            output_shape=output_shape,
+        )
+
+
 def patched_fused_scaled_matmul_reduce_scatter(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -246,6 +287,82 @@ def patched_fused_scaled_matmul_reduce_scatter(
     )
 
 
+def _fused_all_gather_bmm_fp8_fallback(
+    A_shard: torch.Tensor,
+    Bs: list[torch.Tensor],
+    A_scale: torch.Tensor,
+    B_scales: list[torch.Tensor],
+    gather_dim: int,
+    group_name: str,
+    biases: list[torch.Tensor | None],
+    result_scales: list[torch.Tensor | None],
+    out_dtypes: list[torch.dtype | None],
+    use_fast_accum: list[bool],
+) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    return torch.ops.symm_mem.fused_all_gather_scaled_matmul(
+        A_shard,
+        Bs,
+        A_scale,
+        B_scales,
+        gather_dim,
+        group_name,
+        biases,
+        result_scales,
+        out_dtypes,
+        use_fast_accum,
+    )
+
+
+def _fused_all_gather_bmm_fp8(
+    A_shard: torch.Tensor,
+    Bs: list[torch.Tensor],
+    A_scale: torch.Tensor,
+    B_scales: list[torch.Tensor],
+    gather_dim: int,
+    group_name: str,
+    biases: list[torch.Tensor | None],
+    result_scales: list[torch.Tensor | None],
+    out_dtypes: list[torch.dtype | None],
+    use_fast_accum: list[bool],
+) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    out_dtypes = _maybe_convert_scalar_types_to_dtypes(out_dtypes)
+
+    if len(biases) != len(Bs):
+        raise ValueError("len(biases) must be the same as len(Bs)")
+    if len(result_scales) != len(Bs):
+        raise ValueError("len(result_scales) must be the same as len(Bs)")
+    if len(out_dtypes) != len(Bs):
+        raise ValueError("len(out_dtypes) must be the same as len(Bs)")
+    if len(use_fast_accum) != len(Bs):
+        raise ValueError("len(use_gast_accum_list) must be the same as len(Bs)")
+
+    with torch.profiler.record_function("fused_all_gather_scaled_matmul"):
+        A, res = _fused_all_gather_matmul_impl(
+            torch.ops.vllm.bmm_fp8.default,
+            A_shard,
+            Bs,
+            A_scale,
+            [
+                {
+                    "scale_b": B_scale,
+                    "bias": bias,
+                    "scale_result": result_scale,
+                    "out_dtype": out_dtype,
+                    "use_fast_accum": fast_accum,
+                }
+                for B_scale, bias, result_scale, out_dtype, fast_accum in zip(
+                    B_scales, biases, result_scales, out_dtypes, use_fast_accum
+                )
+            ],
+            out_dtypes,
+            gather_dim,
+            group_name,
+            True,
+        )
+        assert A is not None
+        return A, res
+
+
 if supports_custom_op():
     direct_register_custom_op(
         op_name="all_reduce",
@@ -272,6 +389,18 @@ if supports_custom_op():
         op_name="patched_fused_scaled_matmul_reduce_scatter",
         op_func=patched_fused_scaled_matmul_reduce_scatter,
         fake_impl=patched_fused_scaled_matmul_reduce_scatter_fake,
+    )
+
+    direct_register_custom_op(
+        op_name="_fused_bmm_fp8_reduce_scatter",
+        op_func=_fused_bmm_fp8_reduce_scatter,
+        fake_impl=patched_fused_scaled_matmul_reduce_scatter_fake,
+    )
+
+    direct_register_custom_op(
+        op_name="_fused_all_gather_bmm_fp8",
+        op_func=_fused_all_gather_bmm_fp8,
+        fake_impl=_fused_all_gather_bmm_fp8_fallback,
     )
 
 
