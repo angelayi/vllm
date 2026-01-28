@@ -21,11 +21,11 @@ import torch.fx as fx
 from torch._dispatch.python import enable_python_dispatcher
 
 import vllm.envs as envs
-from vllm.compilation.inductor_pass import pass_context
 from vllm.compilation.partition_rules import (
     inductor_partition_rule_context,
     should_split,
 )
+from vllm.compilation.vllm_inductor_pass import pass_context
 from vllm.config import CompilationConfig, CUDAGraphMode, VllmConfig
 from vllm.config.compilation import DynamicShapesType
 from vllm.config.utils import Range, hash_factors
@@ -42,8 +42,8 @@ from .compiler_interface import (
     is_compile_cache_enabled,
 )
 from .counter import compilation_counter
-from .inductor_pass import InductorPass
 from .pass_manager import PostGradPassManager
+from .vllm_inductor_pass import VllmInductorPass
 
 logger = init_logger(__name__)
 
@@ -728,7 +728,7 @@ class VllmBackend:
                 # Config should automatically wrap all inductor passes
                 assert isinstance(
                     self.compilation_config.inductor_compile_config[self.pass_key],
-                    InductorPass,
+                    VllmInductorPass,
                 )
                 self.pass_manager.add(
                     self.compilation_config.inductor_compile_config[self.pass_key]

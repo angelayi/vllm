@@ -5,12 +5,12 @@ import copy
 import pytest
 import torch
 
-from vllm.compilation.inductor_pass import (
+from vllm.compilation.pass_manager import PostGradPassManager
+from vllm.compilation.vllm_inductor_pass import (
     CallableInductorPass,
-    InductorPass,
+    VllmInductorPass,
     pass_context,
 )
-from vllm.compilation.pass_manager import PostGradPassManager
 from vllm.config import ModelConfig, VllmConfig
 from vllm.config.utils import Range
 
@@ -31,8 +31,11 @@ def test_bad_callable():
         pass_manager.add(simple_callable)  # type: ignore[arg-type]
 
 
-# Pass that inherits from InductorPass
-class ProperPass(InductorPass):
+# Pass that inherits from VllmInductorPass
+class ProperPass(VllmInductorPass):
+    def __init__(self):
+        super().__init__()
+
     def __call__(self, graph: torch.fx.graph.Graph) -> None:
         pass
 
@@ -43,7 +46,7 @@ class ProperPass(InductorPass):
         ProperPass(),
         # Can also wrap callables in CallableInductorPass for compliance
         CallableInductorPass(simple_callable),
-        CallableInductorPass(simple_callable, InductorPass.hash_source(__file__)),
+        CallableInductorPass(simple_callable, VllmInductorPass.hash_source(__file__)),
     ],
 )
 def test_pass_manager_uuid(callable):

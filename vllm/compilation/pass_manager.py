@@ -34,12 +34,11 @@ if current_platform.is_cuda():
     from .collective_fusion import AllReduceFusionPass, AsyncTPPass
 
 from .fix_functionalization import FixFunctionalizationPass
-from .inductor_pass import (
+from .noop_elimination import NoOpEliminationPass
+from .vllm_inductor_pass import (
     CustomGraphPass,
-    InductorPass,
     get_pass_context,
 )
-from .noop_elimination import NoOpEliminationPass
 
 logger = init_logger(__name__)
 
@@ -69,8 +68,7 @@ class PostGradPassManager(CustomGraphPass):  # type: ignore[misc]
     """
     The pass manager for post-grad passes.
     It handles configuration, adding custom passes, and running passes.
-    It supports uuid for the Inductor code cache. That includes torch<2.6
-    support using pickling (in .inductor_pass.CustomGraphPass).
+    It supports uuid for the Inductor code cache.
 
     The order of the post-grad post-passes is:
     1. passes (constructor parameter)
@@ -81,7 +79,7 @@ class PostGradPassManager(CustomGraphPass):  # type: ignore[misc]
     """
 
     def __init__(self) -> None:
-        self.passes: list[InductorPass] = []
+        self.passes: list[VllmInductorPass] = []
 
     @with_pattern_match_debug
     def __call__(self, graph: fx.Graph) -> None:
@@ -144,15 +142,15 @@ class PostGradPassManager(CustomGraphPass):  # type: ignore[misc]
             self.post_cleanup = PostCleanupPass(config)
             self.fix_functionalization = FixFunctionalizationPass(config)
 
-    def add(self, pass_: InductorPass) -> None:
-        assert isinstance(pass_, InductorPass)
+    def add(self, pass_: VllmInductorPass) -> None:
+        assert isinstance(pass_, VllmInductorPass)
         self.passes.append(pass_)
 
     def uuid(self) -> str:
         """
         The PostGradPassManager is set as a custom pass in the Inductor and
         affects compilation caching. Its uuid depends on the UUIDs of all
-        dependent passes and the pass config. See InductorPass for more info.
+        dependent passes and the pass config. See VllmInductorPass for more info.
         """
         passes = []
 
@@ -165,4 +163,4 @@ class PostGradPassManager(CustomGraphPass):  # type: ignore[misc]
         # recompiles the graph for the new dynamic compile range.
         state["compile_range"] = str(get_pass_context().compile_range)
         state["passes"] = passes
-        return InductorPass.hash_dict(state)
+        return VllmInductorPass.hash_dict(state)

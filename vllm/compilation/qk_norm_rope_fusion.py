@@ -16,9 +16,12 @@ from vllm.model_executor.layers.attention import Attention
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
 
 from .fusion import empty_bf16, empty_fp32, empty_i64
-from .inductor_pass import enable_fake_mode
 from .matcher_utils import MatcherRMSNorm, MatcherRotaryEmbedding
-from .vllm_inductor_pass import VllmInductorPass, VllmPatternMatcherPass
+from .vllm_inductor_pass import (
+    VllmInductorPass,
+    VllmPatternMatcherPass,
+    enable_fake_mode,
+)
 
 logger = init_logger(__name__)
 

@@ -233,7 +233,7 @@ def normalize_value(x):
         return ".".join([p for p in (module, qual) if p]) or repr(x)
 
     # Prefer stable uuid identifiers for objects that provide them, even if
-    # they are callable instances (e.g., InductorPass wrappers).
+    # they are callable instances (e.g., VllmInductorPass wrappers).
     if hasattr(x, "uuid") and callable(getattr(x, "uuid", None)):
         return x.uuid()
 

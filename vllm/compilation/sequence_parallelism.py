@@ -20,10 +20,13 @@ from vllm.model_executor.layers.quantization.utils.quant_utils import (
 )
 from vllm.platforms import current_platform
 
-from .inductor_pass import enable_fake_mode
 from .matcher_utils import MatcherFusedAddRMSNorm, MatcherQuantFP8, MatcherRMSNorm
 from .noop_elimination import NoOpEliminationPass
-from .vllm_inductor_pass import VllmInductorPass, VllmPatternMatcherPass
+from .vllm_inductor_pass import (
+    VllmInductorPass,
+    VllmPatternMatcherPass,
+    enable_fake_mode,
+)
 
 logger = init_logger(__name__)
 
@@ -352,6 +355,7 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
         # 2. For specific shape provided during compilation (e.g., from
         #    `compile_sizes`), which must be divisible by the tensor-parallel
         #    size.
+        assert self.compilation_config is not None
         if (
             not self.compilation_config.splitting_ops
             or self.compilation_config.use_inductor_graph_partition

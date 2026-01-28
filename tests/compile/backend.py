@@ -12,7 +12,6 @@ from torch._ops import OpOverload
 from torch.fx._utils import lazy_format_graph_code
 
 from vllm.compilation.fx_utils import find_op_nodes
-from vllm.compilation.inductor_pass import InductorPass
 from vllm.compilation.pass_manager import with_pattern_match_debug
 from vllm.compilation.vllm_inductor_pass import VllmInductorPass
 from vllm.config import VllmConfig, get_current_vllm_config
@@ -21,7 +20,7 @@ from vllm.logger import init_logger
 logger = init_logger("vllm.tests.compile.backend")
 
 
-class LazyInitPass(InductorPass):
+class LazyInitPass(VllmInductorPass):
     """
     If there's a pass that we want to initialize lazily in a test,
     we can wrap it in LazyInitPass, which will initialize the pass when invoked
@@ -29,6 +28,7 @@ class LazyInitPass(InductorPass):
     """
 
     def __init__(self, pass_cls: type[VllmInductorPass], vllm_config: VllmConfig):
+        super().__init__()
         self.pass_cls = pass_cls
         self.vllm_config = weakref.proxy(vllm_config)  # avoid cycle
 
@@ -49,7 +49,7 @@ class TestBackend:
     Inductor config is default-initialized from VllmConfig.CompilationConfig.
     """
 
-    def __init__(self, *passes: InductorPass | Callable[[fx.Graph], None]):
+    def __init__(self, *passes: VllmInductorPass | Callable[[fx.Graph], None]):
         self.custom_passes = list(passes)
         vllm_config = get_current_vllm_config()
         compile_config = vllm_config.compilation_config

@@ -12,7 +12,7 @@ from pydantic import ConfigDict, Field, TypeAdapter, field_validator
 from pydantic.dataclasses import dataclass
 
 import vllm.envs as envs
-from vllm.compilation.inductor_pass import CallableInductorPass, InductorPass
+from vllm.compilation.vllm_inductor_pass import CallableInductorPass, VllmInductorPass
 from vllm.config.utils import (
     Range,
     config,
@@ -785,7 +785,7 @@ class CompilationConfig:
             if not isinstance(v, str):
                 assert callable(v), f"pass {k} should be callable or a qualified name"
                 self.inductor_compile_config[k] = (
-                    v if isinstance(v, InductorPass) else CallableInductorPass(v)
+                    v if isinstance(v, VllmInductorPass) else CallableInductorPass(v)
                 )
                 continue
 
@@ -795,7 +795,9 @@ class CompilationConfig:
             func_name = names[-1]
             func = __import__(module).__dict__[func_name]
             self.inductor_compile_config[k] = (
-                func if isinstance(func, InductorPass) else CallableInductorPass(func)
+                func
+                if isinstance(func, VllmInductorPass)
+                else CallableInductorPass(func)
             )
 
         if self.pass_config.enable_qk_norm_rope_fusion:

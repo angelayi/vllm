@@ -10,8 +10,8 @@ from torch import nn
 import tests.compile.silly_attention  # noqa
 from vllm.compilation.counter import compilation_counter
 from vllm.compilation.decorators import support_torch_compile
-from vllm.compilation.inductor_pass import (
-    InductorPass,
+from vllm.compilation.vllm_inductor_pass import (
+    VllmInductorPass,
     get_pass_context,
 )
 from vllm.config import (
@@ -49,8 +49,9 @@ def run_model(vllm_config: VllmConfig, model: nn.Module, batch_sizes: list[int])
             model(torch.randn(batch_size, MLP_SIZE))
 
 
-class PostGradRangeChecker(InductorPass):
+class PostGradRangeChecker(VllmInductorPass):
     def __init__(self, ranges: list[Range]):
+        super().__init__()
         self.ranges = ranges
         self.num_calls = 0
 
@@ -63,7 +64,7 @@ class PostGradRangeChecker(InductorPass):
 
     def uuid(self) -> str:
         state: dict[str, Any] = {}
-        return InductorPass.hash_dict(state)
+        return VllmInductorPass.hash_dict(state)
 
 
 def test_compile_ranges(use_fresh_inductor_cache):

@@ -24,9 +24,12 @@ from vllm.model_executor.layers.quantization.utils.quant_utils import (
 from vllm.platforms import current_platform
 from vllm.utils.torch_utils import direct_register_custom_op
 
-from .inductor_pass import enable_fake_mode
 from .matcher_utils import MatcherFusedAddRMSNorm, MatcherQuantFP8, MatcherRMSNorm
-from .vllm_inductor_pass import VllmInductorPass, VllmPatternMatcherPass
+from .vllm_inductor_pass import (
+    VllmInductorPass,
+    VllmPatternMatcherPass,
+    enable_fake_mode,
+)
 
 FP8_DTYPE = current_platform.fp8_dtype()
 
@@ -431,6 +434,7 @@ class AsyncTPPass(VllmPatternMatcherPass):
         # This pass is applied on top of the sequence parallelism pass.
         # It inherits the same applicability condition as `SequenceParallelismPass`.
         # See `SequenceParallelismPass.is_applicable` for more details.
+        assert self.compilation_config is not None
         if (
             not self.compilation_config.splitting_ops
             or self.compilation_config.use_inductor_graph_partition
