@@ -93,6 +93,10 @@ def test_vllm_structured_logging_artifacts(use_fresh_inductor_cache):
     with (
         patch("vllm.compilation.backends.trace_structured", capture),
         patch("vllm.compilation.piecewise_backend.trace_structured", capture),
+        patch(
+            "vllm.compilation.passes.vllm_inductor_pass.trace_structured",
+            capture,
+        ),
         set_current_vllm_config(vllm_config),
     ):
         model = SimpleModel(vllm_config=vllm_config, prefix="test")
@@ -118,4 +122,9 @@ def test_vllm_structured_logging_artifacts(use_fresh_inductor_cache):
     assert len(submod_dumps) == 2, (
         "Expected 2 submods (one before attention, one after attention), "
         f"got {len(submod_dumps)}"
+    )
+    # Per-pass graph dumps from VllmInductorPass.dump_graph (one per pass)
+    pass_dumps = capture.get("graph_dump", r"vllm_post_grad\..*")
+    assert len(pass_dumps) >= 1, (
+        f"Expected at least 1 per-pass graph dump, got {len(pass_dumps)}"
     )

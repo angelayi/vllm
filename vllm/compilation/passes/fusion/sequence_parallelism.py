@@ -382,7 +382,7 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
         # Used to clean up redundant views created temporarily
         # to circumvent residual shape change issues
         self.noop_cleanup = NoOpEliminationPass(config)
-        self.noop_cleanup.pass_name = f"{self.pass_name}.{self.noop_cleanup.pass_name}"
+        self.noop_cleanup.dump_enabled = False
 
         self.patterns: PatternMatcherPass = PatternMatcherPass(
             pass_name="sequence_parallelism_pass"

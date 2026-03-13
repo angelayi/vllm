@@ -193,8 +193,6 @@ class FixFunctionalizationPass(VllmInductorPass):
 
             count += 1
 
-        self.dump_graph(graph, "before_cleanup")
-
         # Remove the nodes all at once
         count_removed = len(self.nodes_to_remove)
         for node in self.nodes_to_remove:
