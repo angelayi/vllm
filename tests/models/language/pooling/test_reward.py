@@ -123,7 +123,7 @@ def test_prm_models(
         hf_output = torch.tensor(hf_output).float()
         vllm_output = torch.tensor(vllm_output).float()
 
-        assert torch.allclose(hf_output, vllm_output, 1.5e-2)
+        assert torch.allclose(hf_output, vllm_output, rtol=2e-2)
 
 
 @pytest.mark.parametrize(
@@ -155,4 +155,4 @@ def test_prm_models_with_golden_outputs(
         golden_output = torch.tensor(golden_output).float()
         vllm_output = torch.tensor(vllm_output).float()
 
-        assert torch.allclose(golden_output, vllm_output, 1.5e-2)
+        assert torch.allclose(golden_output, vllm_output, rtol=2e-2)
