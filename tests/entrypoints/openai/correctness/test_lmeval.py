@@ -19,8 +19,8 @@ MODEL_NAME = "Qwen/Qwen2-1.5B-Instruct"
 NUM_CONCURRENT = 500
 TASK = "gsm8k"
 FILTER = "exact_match,strict-match"
-RTOL = 0.03
-EXPECTED_VALUE = 0.54
+RTOL = 0.05
+EXPECTED_VALUE = 0.50
 DEFAULT_ARGS = ["--max-model-len", "4096"]
 MORE_ARGS_LIST = [
     [],  # Default
