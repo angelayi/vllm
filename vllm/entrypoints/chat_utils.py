@@ -174,6 +174,15 @@ class ChatCompletionContentPartPromptEmbedsParam(TypedDict, total=False):
     type: Required[Literal["prompt_embeds"]]
     """The type of the content part."""
 
+    source_text: str
+    """Optional original text that was encoded into these embeddings.
+
+    When provided, the renderer uses it to detect and correct BPE tokenization
+    boundary artifacts. Without this field, special-token boundaries can prevent
+    BPE merges (e.g. ``".\\n"`` stays as two tokens instead of merging), causing
+    a positional offset that diverges from the raw-text path.
+    """
+
 
 class VideoURL(TypedDict, total=False):
     url: Required[str]
@@ -767,8 +776,14 @@ def _resolve_items(
         mm_uuids["vision_chunk"] = vision_chunk_uuids
     if "prompt_embeds" in items_by_modality:
         mm_data["prompt_embeds"] = [
-            data for data, _uuid in items_by_modality["prompt_embeds"]
+            item[0] for item in items_by_modality["prompt_embeds"]
         ]
+        source_texts = [
+            item[2] if len(item) > 2 else None
+            for item in items_by_modality["prompt_embeds"]
+        ]
+        if any(st is not None for st in source_texts):
+            mm_data["prompt_embeds_source_texts"] = source_texts
 
     return mm_data, mm_uuids
 
@@ -892,7 +907,7 @@ class BaseMultiModalContentParser(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def parse_prompt_embeds(self, data: str) -> None:
+    def parse_prompt_embeds(self, data: str, *, source_text: str | None = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -924,7 +939,7 @@ class MultiModalContentParser(BaseMultiModalContentParser):
         return self._tracker.model_config
 
     @override
-    def parse_prompt_embeds(self, data: str) -> None:
+    def parse_prompt_embeds(self, data: str, *, source_text: str | None = None) -> None:
         """Decode a base64 prompt embeds tensor and store it in the tracker.
 
         Emits a single `PROMPT_EMBEDS_PLACEHOLDER_TOKEN` sentinel per
@@ -935,7 +950,7 @@ class MultiModalContentParser(BaseMultiModalContentParser):
             raise ValueError(_ENABLE_PROMPT_EMBEDS_ERROR)
 
         tensor = safe_load_prompt_embeds(self.model_config, data.encode())
-        self._tracker.add("prompt_embeds", (tensor, None))
+        self._tracker.add("prompt_embeds", (tensor, None, source_text))
         self._add_placeholder("prompt_embeds", PROMPT_EMBEDS_PLACEHOLDER_TOKEN)
 
     def parse_image(self, image_url: str | None, uuid: str | None = None) -> None:
@@ -1063,7 +1078,7 @@ class AsyncMultiModalContentParser(BaseMultiModalContentParser):
         return self._tracker.model_config
 
     @override
-    def parse_prompt_embeds(self, data: str) -> None:
+    def parse_prompt_embeds(self, data: str, *, source_text: str | None = None) -> None:
         """Schedule async prompt embeds decode and store the coroutine in the tracker.
 
         Like the sync variant, emits a single sentinel `PROMPT_EMBEDS_PLACEHOLDER_TOKEN`
@@ -1073,17 +1088,15 @@ class AsyncMultiModalContentParser(BaseMultiModalContentParser):
         if not self.model_config.enable_prompt_embeds:
             raise ValueError(_ENABLE_PROMPT_EMBEDS_ERROR)
 
-        coro = self._load_prompt_embeds_async(data.encode())
+        coro = self._load_prompt_embeds_async(data.encode(), source_text)
         self._tracker.add("prompt_embeds", coro)
         self._add_placeholder("prompt_embeds", PROMPT_EMBEDS_PLACEHOLDER_TOKEN)
 
     async def _load_prompt_embeds_async(
-        self, data_bytes: bytes
-    ) -> tuple[torch.Tensor, None]:
-        # Second tuple slot fills the tracker's generic `(item, uuid | None)`
-        # contract. prompt_embeds has no UUID concept, so it's always `None`.
+        self, data_bytes: bytes, source_text: str | None = None
+    ) -> tuple[torch.Tensor, None, str | None]:
         tensor = await safe_load_prompt_embeds_async(self.model_config, data_bytes)
-        return tensor, None
+        return tensor, None, source_text
 
     async def _image_with_uuid_async(self, image_url: str | None, uuid: str | None):
         image = (
@@ -1422,7 +1435,10 @@ MM_PARSER_MAP: dict[
     "image_url": lambda part: _ImageParser(part).get("image_url", {}).get("url", None),
     "image_embeds": lambda part: _ImageEmbedsParser(part).get("image_embeds", None),
     "audio_embeds": lambda part: _AudioEmbedsParser(part).get("audio_embeds", None),
-    "prompt_embeds": lambda part: _PromptEmbedsParser(part).get("data", None),
+    "prompt_embeds": lambda part: (
+        _PromptEmbedsParser(part).get("data", None),
+        _PromptEmbedsParser(part).get("source_text", None),
+    ),
     "image_pil": lambda part: _PILImageParser(part).get("image_pil", None),
     "audio_url": lambda part: _AudioParser(part).get("audio_url", {}).get("url", None),
     "input_audio": lambda part: _InputAudioParser(part).get("input_audio", None),
@@ -1505,7 +1521,9 @@ def _parse_chat_message_content_mm_part(
             prompt_embeds_params = cast(  # type: ignore[assignment]
                 ChatCompletionContentPartPromptEmbedsParam, part
             )
-            return "prompt_embeds", prompt_embeds_params.get("data", None)
+            data = prompt_embeds_params.get("data", None)
+            source_text = prompt_embeds_params.get("source_text", None)
+            return "prompt_embeds", (data, source_text)
         if "audio_url" in part:
             audio_params = cast(  # type: ignore[assignment]
                 CustomChatCompletionContentSimpleAudioParam, part
@@ -1671,9 +1689,10 @@ def _parse_chat_message_content_part(
         mm_parser.parse_audio_embeds(content, uuid)
         modality = "audio"
     elif part_type == "prompt_embeds":
-        if not content:
+        pe_data, pe_source_text = cast(tuple[str | None, str | None], content)
+        if not pe_data:
             raise ValueError(_PROMPT_EMBEDS_MISSING_DATA_ERROR)
-        mm_parser.parse_prompt_embeds(cast(str, content))
+        mm_parser.parse_prompt_embeds(pe_data, source_text=pe_source_text)
         modality = "prompt_embeds"
     elif part_type == "audio_url":
         str_content = cast(str, content)

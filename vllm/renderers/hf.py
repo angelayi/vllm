@@ -161,6 +161,97 @@ def _expand_prompt_embeds_placeholders(
     return expanded
 
 
+def _fix_bpe_boundary_orphans(
+    token_ids: list[int],
+    placeholder_token_id: int,
+    tensor_lengths: list[int],
+    source_texts: list[str | None],
+    tokenizer: HfTokenizer,
+) -> list[int]:
+    """Remove orphan tokens caused by BPE boundary effects around placeholders.
+
+    When the tokenizer splits text at the ``<prompt_embeds>`` special token
+    boundary, BPE merges that would normally fuse characters across that
+    boundary (e.g. ``".\\n"`` → single token) are prevented.  This leaves an
+    extra "orphan" token adjacent to the placeholder that wouldn't exist in
+    the equivalent raw-text tokenization.
+
+    For each placeholder that has a corresponding ``source_text``, we tokenize
+    a reference string where the placeholder is replaced by the source text,
+    compare token counts, and remove orphan tokens to achieve positional parity.
+    """
+    result = list(token_ids)
+
+    # Process each placeholder in order
+    ph_positions = [i for i, tok in enumerate(result) if tok == placeholder_token_id]
+
+    if len(ph_positions) != len(tensor_lengths):
+        return result
+
+    # Track cumulative offset as we remove tokens
+    offset = 0
+    for idx, (ph_pos_orig, tensor_len, source_text) in enumerate(
+        zip(ph_positions, tensor_lengths, source_texts)
+    ):
+        if source_text is None:
+            continue
+
+        ph_pos = ph_pos_orig - offset
+
+        # Build a local context window around the placeholder to compare
+        # tokenization. We take tokens before and after the placeholder,
+        # decode them, substitute the placeholder with source_text, and
+        # re-tokenize to find the expected count.
+        #
+        # Use a window large enough to capture BPE merge context.
+        window_start = max(0, ph_pos - 5)
+        window_end = min(len(result), ph_pos + 6)
+
+        # Get the token segment around the placeholder (excluding the
+        # placeholder itself)
+        before_tokens = result[window_start:ph_pos]
+        after_tokens = result[ph_pos + 1 : window_end]
+
+        # Decode context around placeholder
+        before_text = (
+            tokenizer.decode(before_tokens, skip_special_tokens=False)
+            if before_tokens
+            else ""
+        )
+        after_text = (
+            tokenizer.decode(after_tokens, skip_special_tokens=False)
+            if after_tokens
+            else ""
+        )
+
+        # Reference: what the segment looks like with the source text
+        reference_segment = before_text + source_text + after_text
+        reference_ids = tokenizer.encode(reference_segment, add_special_tokens=False)
+
+        # Actual: what the segment looks like with the placeholder
+        # (before_tokens + [placeholder] + after_tokens)
+        actual_non_placeholder_count = len(before_tokens) + len(after_tokens)
+
+        # Expected non-placeholder count from the reference
+        # The source_text encodes to some number of tokens;
+        # remove that to get expected context count
+        source_ids = tokenizer.encode(source_text, add_special_tokens=False)
+        expected_context_count = len(reference_ids) - len(source_ids)
+
+        orphan_count = actual_non_placeholder_count - expected_context_count
+        if orphan_count <= 0:
+            continue
+
+        # Remove orphan tokens immediately after the placeholder
+        for _ in range(orphan_count):
+            after_pos = ph_pos + 1
+            if after_pos < len(result) and result[after_pos] != placeholder_token_id:
+                del result[after_pos]
+                offset += 1
+
+    return result
+
+
 def _build_prompt_embeds_positions(
     token_ids: list[int],
     num_tensors: int,
@@ -846,11 +937,20 @@ class HfRenderer(BaseRenderer[HfTokenizer]):
         # but they must NOT be fed to the MM processor (which would reject
         # the unknown key). Extract them here.
         prompt_embeds_tensors: list[torch.Tensor] | None = None
+        prompt_embeds_source_texts: list[str | None] | None = None
         if mm_data is not None and "prompt_embeds" in mm_data:
             prompt_embeds_tensors = list(
                 cast(Sequence[torch.Tensor], mm_data["prompt_embeds"])
             )
-            mm_data = {k: v for k, v in mm_data.items() if k != "prompt_embeds"}
+            prompt_embeds_source_texts = cast(
+                list[str | None] | None,
+                mm_data.get("prompt_embeds_source_texts"),
+            )
+            mm_data = {
+                k: v
+                for k, v in mm_data.items()
+                if k not in ("prompt_embeds", "prompt_embeds_source_texts")
+            }
             if not mm_data:
                 mm_data = None
 
@@ -867,6 +967,22 @@ class HfRenderer(BaseRenderer[HfTokenizer]):
             conversation,
             **chat_template_kwargs,
         )
+
+        # Fix BPE boundary orphans when source_text is available.
+        if (
+            prompt_embeds_tensors
+            and prompt_embeds_source_texts
+            and prompt_embeds_placeholder_token_id is not None
+            and isinstance(prompt_raw, list)
+            and any(st is not None for st in prompt_embeds_source_texts)
+        ):
+            prompt_raw = _fix_bpe_boundary_orphans(
+                prompt_raw,
+                prompt_embeds_placeholder_token_id,
+                [t.shape[0] for t in prompt_embeds_tensors],
+                prompt_embeds_source_texts,
+                tokenizer,
+            )
 
         # NOTE: use_unified_vision_chunk is currently specific to Kimi-K2.5
         # model which uses unified vision chunks for both images and videos.
@@ -950,11 +1066,20 @@ class HfRenderer(BaseRenderer[HfTokenizer]):
         )
 
         prompt_embeds_tensors: list[torch.Tensor] | None = None
+        prompt_embeds_source_texts: list[str | None] | None = None
         if mm_data is not None and "prompt_embeds" in mm_data:
             prompt_embeds_tensors = list(
                 cast(Sequence[torch.Tensor], mm_data["prompt_embeds"])
             )
-            mm_data = {k: v for k, v in mm_data.items() if k != "prompt_embeds"}
+            prompt_embeds_source_texts = cast(
+                list[str | None] | None,
+                mm_data.get("prompt_embeds_source_texts"),
+            )
+            mm_data = {
+                k: v
+                for k, v in mm_data.items()
+                if k not in ("prompt_embeds", "prompt_embeds_source_texts")
+            }
             if not mm_data:
                 mm_data = None
 
@@ -971,6 +1096,22 @@ class HfRenderer(BaseRenderer[HfTokenizer]):
             conversation,
             **chat_template_kwargs,
         )
+
+        # Fix BPE boundary orphans when source_text is available.
+        if (
+            prompt_embeds_tensors
+            and prompt_embeds_source_texts
+            and prompt_embeds_placeholder_token_id is not None
+            and isinstance(prompt_raw, list)
+            and any(st is not None for st in prompt_embeds_source_texts)
+        ):
+            prompt_raw = _fix_bpe_boundary_orphans(
+                prompt_raw,
+                prompt_embeds_placeholder_token_id,
+                [t.shape[0] for t in prompt_embeds_tensors],
+                prompt_embeds_source_texts,
+                tokenizer,
+            )
 
         # NOTE: use_unified_vision_chunk is currently specific to Kimi-K2.5
         # model which uses unified vision chunks for both images and videos.
